@@ -82,7 +82,7 @@ async function waitForTransaction(
 
 // 4) Single iteration: fetch pending, confirm, update DB
 async function pollOnce() {
-  const pendentes = await prisma.pendingPayment.findMany({
+  const pendentes = await prisma.pending_payments.findMany({
     where: { txHash: { not: null }, pago: false },
   });
 
@@ -94,7 +94,7 @@ async function pollOnce() {
     if (tx) {
       const realHash = tx.hash().toString('base64');
       console.log(`✓ #${p.id} confirmed (txHash=${realHash})`);
-      await prisma.pendingPayment.update({
+      await prisma.pending_payments.update({
         where: { id: p.id },
         data: {
           pago: true,
@@ -104,7 +104,7 @@ async function pollOnce() {
       });
     } else {
       console.log(`⏳ #${p.id} not confirmed yet`);
-      await prisma.pendingPayment.update({
+      await prisma.pending_payments.update({
         where: { id: p.id },
         data: { pollAttempts: p.pollAttempts + 1 },
       });

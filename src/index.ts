@@ -12,7 +12,7 @@ import {
 const prisma       = new PrismaClient();
 const rpcEndpoint  = `${process.env.RPC_ENDPOINT}?api_key=${process.env.TONCENTER_API_KEY}`;
 const client       = new TonClient({ endpoint: rpcEndpoint });
-const contractAddr = Address.parse(process.env.CONTRACT_ADDRESS!);
+const contractAddr = Address.parse(process.env.NEXT_PUBLIC_CONTRACT_ADDRESS!);
 
 // --- HTTP Server Setup ---
 const app = express();

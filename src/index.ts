@@ -92,15 +92,27 @@ async function pollOnce() {
           txHash:         realHash
         }
       });
+      const [ fromUser, toUser, bag ] = await Promise.all([
+        prisma.users.findUnique({ where: { id: p.user_id_from } }),
+        prisma.users.findUnique({ where: { id: p.user_id_to   } }),
+        prisma.bags .findUnique({ where: { id: p.bag_id        } })
+      ]);
       // notificar no grupo
-      const bag = await prisma.bags.findUnique({ where: { id: p.bag_id } });
-      if (bag?.chat_id) {
+      if (bag?.chat_id && fromUser && toUser) {
+        const mentionFrom = fromUser.username
+          ? `@${fromUser.username}`
+          : `[${fromUser.first_name}](tg://user?id=${fromUser.id})`;
+        const mentionTo   = toUser.username
+          ? `@${toUser.username}`
+          : `[${toUser.first_name}](tg://user?id=${toUser.id})`;
+        const valor = Number(p.valor).toFixed(2);
         await fetch(`${API}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type':'application/json' },
           body: JSON.stringify({
-            chat_id: bag.chat_id.toString(),
-            text: `✅ Pagamento #${p.id} confirmado on-chain!`
+            chat_id:    bag.chat_id.toString(),
+            text:       `✅ ${mentionFrom} pagou R$ ${valor} para ${mentionTo}.`,
+            parse_mode: 'Markdown'
           })
         });
       }
@@ -119,13 +131,18 @@ async function pollOnce() {
         });
         // notifica no grupo
         const bag = await prisma.bags.findUnique({ where: { id: p.bag_id } });
-        if (bag?.chat_id) {
+        const fromUser = await prisma.users.findUnique({ where: { id: p.user_id_from } });
+        if (bag?.chat_id && fromUser) {
+          const mentionFrom = fromUser.username
+            ? `@${fromUser.username}`
+            : `[${fromUser.first_name}](tg://user?id=${fromUser.id})`;
           await fetch(`${API}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type':'application/json' },
             body: JSON.stringify({
-              chat_id: bag.chat_id.toString(),
-              text: `❌ Pagamento #${p.id} não foi confirmado depois de 10 tentativas. Por favor, tente pagar de novo mais tarde.`
+              chat_id:    bag.chat_id.toString(),
+              text:       `❌ ${mentionFrom}, seu pagamento não foi confirmado. Por favor, tente novamente mais tarde.`,
+              parse_mode: 'Markdown'
             })
           });
         }

@@ -30,8 +30,17 @@ app.listen(port, () => {
 // 1) Normalize + TEP-467 hash of external-in message
 function getNormalizedMessageHash(message: Message): Buffer {
   // Remove campos voláteis
-  const info = { ...message.info, importFee: 0n };
-  const normalized: Message = { ...message, init: null, info };
+  const info = { ...message.info, src: undefined, importFee: 0n };
+  const normalized = {
+    ...message,
+    init: null,
+    info: {
+      // spread o info original, mas sobrescrevo src e importFee
+      ...message.info,
+      src: undefined,
+      importFee: 0n,
+    },
+  } as any as Message;
   return beginCell()
     .store(storeMessage(normalized, { forceRef: true }))
     .endCell()
@@ -51,6 +60,7 @@ async function getTransactionByInMessage(
     const txs: Transaction[] = await client.getTransactions(contractAddr, {
       limit: 20,
       to_lt,
+      archival: true
     });
     if (txs.length === 0) return undefined;
 

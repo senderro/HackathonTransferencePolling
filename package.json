@@ -14,9 +14,11 @@
     "@prisma/client": "^6.12.0",
     "@ton/core": "^0.61.0",
     "@ton/ton": "^15.3.1",
+    "@types/node": "^24.0.15",
     "express": "^5.1.0",
     "prisma": "^6.11.1",
-    "ton-crypto": "^3.2.0"
+    "ton-crypto": "^3.2.0",
+    "ts-node": "^10.9.2"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",

@@ -28,25 +28,23 @@ app.listen(port, () => {
 });
 
 // 1) Normalize + TEP-467 hash of external-in message
-function getNormalizedExtMessageHash(message: Message): Buffer {
-  if (message.info.type !== 'external-in') {
-    throw new Error(`Expected external-in, got ${message.info.type}`);
-  }
-  const info = { ...message.info, src: undefined, importFee: 0n };
+function getNormalizedMessageHash(message: Message): Buffer {
+  // Remove campos voláteis
+  const info = { ...message.info, importFee: 0n };
   const normalized: Message = { ...message, init: null, info };
   return beginCell()
     .store(storeMessage(normalized, { forceRef: true }))
     .endCell()
     .hash();
 }
-
 // 2) Scan contract transactions for matching in-message hash
 async function getTransactionByInMessage(
   inMessageBoc: string
 ): Promise<Transaction | undefined> {
-  const slice = Cell.fromBase64(inMessageBoc).beginParse();
-  const inMsg = loadMessage(slice);
-  const targetHash = getNormalizedExtMessageHash(inMsg);
+  const slice      = Cell.fromBase64(inMessageBoc).beginParse();
+  const inMsg      = loadMessage(slice);
+  const targetHash = getNormalizedMessageHash(inMsg);
+
   let to_lt: string | undefined = undefined;
 
   while (true) {
@@ -57,13 +55,15 @@ async function getTransactionByInMessage(
     if (txs.length === 0) return undefined;
 
     for (const tx of txs) {
-      if (!tx.inMessage || tx.inMessage.info.type !== 'external-in') {
-        continue;
+      // apenas pula se não houver mensagem de entrada
+      if (!tx.inMessage) continue;
+      const h = getNormalizedMessageHash(tx.inMessage as Message);
+      if (h.equals(targetHash)) {
+        return tx;
       }
-      const h = getNormalizedExtMessageHash(tx.inMessage as Message);
-      if (h.equals(targetHash)) return tx;
     }
 
+    // próxima “página” descendo pelo lt
     to_lt = txs[txs.length - 1]!.lt.toString();
   }
 }
@@ -72,7 +72,7 @@ async function getTransactionByInMessage(
 async function waitForTransaction(
   inMessageBoc: string,
   retries = 20,
-  delayMs = 2000
+  delayMs = 2_000
 ): Promise<Transaction | undefined> {
   for (let i = 0; i < retries; i++) {
     const tx = await getTransactionByInMessage(inMessageBoc);
@@ -81,6 +81,7 @@ async function waitForTransaction(
   }
   return undefined;
 }
+
 
 // 4) Single iteration: fetch pending, confirm, update DB
 async function pollOnce() {

@@ -57,7 +57,9 @@ async function getTransactionByInMessage(
     if (txs.length === 0) return undefined;
 
     for (const tx of txs) {
-      if (!tx.inMessage) continue;
+      if (!tx.inMessage || tx.inMessage.info.type !== 'external-in') {
+        continue;
+      }
       const h = getNormalizedExtMessageHash(tx.inMessage as Message);
       if (h.equals(targetHash)) return tx;
     }

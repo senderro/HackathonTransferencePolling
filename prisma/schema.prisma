@@ -42,6 +42,7 @@ model pending_payments {
   data_pagamento                             DateTime?
   pollAttempts                               Int       @default(0)
   txHash                                     String?
+  user_to_address                            String?
   bags                                       bags      @relation(fields: [bag_id], references: [id], onDelete: Cascade)
   users_pending_payments_user_id_fromTousers users     @relation("pending_payments_user_id_fromTousers", fields: [user_id_from], references: [id], onDelete: Cascade)
   users_pending_payments_user_id_toTousers   users     @relation("pending_payments_user_id_toTousers", fields: [user_id_to], references: [id], onDelete: Cascade)

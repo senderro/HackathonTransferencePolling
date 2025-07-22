@@ -1,118 +1,80 @@
+// worker/polling.js
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import { TonClient, Address, Transaction } from '@ton/ton';
-import {
-  Cell,
-  beginCell,
-  loadMessage,
-  storeMessage,
-  Message
-} from '@ton/core';
+import { Cell, beginCell, loadMessage, storeMessage, Message } from '@ton/core';
 
 const prisma       = new PrismaClient();
 const rpcEndpoint  = `${process.env.RPC_ENDPOINT}?api_key=${process.env.TONCENTER_API_KEY}`;
 const client       = new TonClient({ endpoint: rpcEndpoint });
-const contractAddr = Address.parse(process.env.NEXT_PUBLIC_CONTRACT_ADDRESS!);
 
-// --- HTTP Server Setup ---
-const app = express();
-// health check
-app.get('/healthz', (_req, res) => res.status(200).send('OK'));
-// keep-awake endpoint
-app.get('/cronjobacorda', (_req, res) => res.status(200).send('awake'));
-
-// start server
-const port = process.env.PORT ? Number(process.env.PORT) : 3000;
-app.listen(port, () => {
-  console.log(`🚀 HTTP server listening on port ${port}`);
-});
-
-// 1) Normalize + TEP-467 hash of external-in message
-function getNormalizedMessageHash(message: Message): Buffer {
-  // Remove campos voláteis
-  const info = { ...message.info, src: undefined, importFee: 0n };
-  const normalized = {
-    ...message,
-    init: null,
-    info: {
-      // spread o info original, mas sobrescrevo src e importFee
-      ...message.info,
-      src: undefined,
-      importFee: 0n,
-    },
-  } as any as Message;
+// --- Utils: normalização de mensagem (TEP-467) ---
+function getNormalizedMessageHash(message: any) {
+  const info = { ...message.info };
+  // remova sempre src
+  if ('src' in info) delete info.src;
+  // zere fees
+  if ('importFee' in info)   info.importFee   = 0n;
+  if ('bounce' in info)      info.bounce      = false;
+  if ('bounced' in info)     info.bounced     = false;
+  if ('ihrFee' in info)      info.ihrFee      = 0n;
+  if ('forwardFee' in info)  info.forwardFee  = 0n;
+  if ('createdLt' in info)   info.createdLt   = 0n;
+  if ('createdAt' in info)   info.createdAt   = 0;
+  
+  const normalized = { ...message, init: null, info };
   return beginCell()
     .store(storeMessage(normalized, { forceRef: true }))
     .endCell()
-    .hash();
+    .hash();  // retorna Buffer
 }
-// 2) Scan contract transactions for matching in-message hash
-async function getTransactionByInMessage(
-  inMessageBoc: string
-): Promise<Transaction | undefined> {
-  const slice      = Cell.fromBase64(inMessageBoc).beginParse();
-  const inMsg      = loadMessage(slice);
-  const targetHash = getNormalizedMessageHash(inMsg);
 
-  let to_lt: string | undefined = undefined;
+// busca (paginada) nas txs da carteira do usuário
+async function findTxInWallet(bocBase64: any, walletAddress: any) {
+  const slice       = Cell.fromBase64(bocBase64).beginParse();
+  const inMsg       = loadMessage(slice);
+  const targetHash  = getNormalizedMessageHash(inMsg);
+  const walletAddr  = Address.parse(walletAddress);
 
-  while (true) {
-    const txs: Transaction[] = await client.getTransactions(contractAddr, {
-      limit: 20,
+  let to_lt;
+  for (let page = 0; page < 20; page++) {
+    const txs = await client.getTransactions(walletAddr, {
+      limit:    50,
+      archival: true,
       to_lt,
-      archival: true
     });
-    if (txs.length === 0) return undefined;
+    if (txs.length === 0) break;
 
     for (const tx of txs) {
-      // apenas pula se não houver mensagem de entrada
       if (!tx.inMessage) continue;
-      const h = getNormalizedMessageHash(tx.inMessage as Message);
+      const h = getNormalizedMessageHash(tx.inMessage);
       if (h.equals(targetHash)) {
         return tx;
       }
     }
-
-    // próxima “página” descendo pelo lt
-    to_lt = txs[txs.length - 1]!.lt.toString();
-  }
-}
-
-// 3) Polling with retries + delay
-async function waitForTransaction(
-  inMessageBoc: string,
-  retries = 20,
-  delayMs = 2_000
-): Promise<Transaction | undefined> {
-  for (let i = 0; i < retries; i++) {
-    const tx = await getTransactionByInMessage(inMessageBoc);
-    if (tx) return tx;
-    await new Promise(r => setTimeout(r, delayMs));
+    to_lt = txs[txs.length - 1].lt.toString();
   }
   return undefined;
 }
 
-
-// 4) Single iteration: fetch pending, confirm, update DB
+// Iteração única de polling
 async function pollOnce() {
   const pendentes = await prisma.pending_payments.findMany({
     where: { txHash: { not: null }, pago: false },
   });
 
   for (const p of pendentes) {
-    const boc = p.txHash!;
-    console.log(`🔍 Checking PendingPayment#${p.id}…`);
-
-    const tx = await waitForTransaction(boc);
+    console.log(`🔍 Checking PendingPayment#${p.id} (wallet=${p.user_to_address})…`);
+    const tx = await findTxInWallet(p.txHash, p.user_to_address);
     if (tx) {
       const realHash = tx.hash().toString('base64');
       console.log(`✓ #${p.id} confirmed (txHash=${realHash})`);
       await prisma.pending_payments.update({
         where: { id: p.id },
         data: {
-          pago: true,
+          pago:          true,
           data_pagamento: new Date(),
-          txHash: realHash,
+          txHash:        realHash,  // substitui BOC pelo hash real da tx
         },
       });
     } else {
@@ -125,12 +87,16 @@ async function pollOnce() {
   }
 }
 
-// 5) Main loop
+// Loop principal
 async function main() {
   console.log('👷‍♂️ Polling service started');
   while (true) {
-    try { await pollOnce(); }
-    catch (e) { console.error('❌ Polling error:', e); }
+    try {
+      await pollOnce();
+    } catch (e) {
+      console.error('❌ Polling error:', e);
+    }
+    // espera 60s antes da próxima rodada
     await new Promise(r => setTimeout(r, 60_000));
   }
 }
